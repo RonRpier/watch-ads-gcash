@@ -108,38 +108,15 @@ def claim_reward():
     data = request.json
     gmail = data.get('gmail')
     
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('UPDATE users SET balance = balance + 5.0 WHERE gmail = %s', (gmail,))
-        conn.commit()
-        
-        cursor.execute('SELECT balance FROM users WHERE gmail = %s', (gmail,))
-        new_balance = cursor.fetchone()[0]
-        cursor.close()
-        conn.close()
-        
-        return jsonify({"status": "success", "balance": new_balance})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
-
-@app.route('/claim-reward', methods=['POST'])
-def claim_reward():
-    data = request.json
-    gmail = data.get('gmail')
-    
     if not gmail:
         return jsonify({"status": "error", "message": "Walay nakit-ang Gmail account."})
     
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # I-update ang balanse
         cursor.execute('UPDATE users SET balance = balance + 5.0 WHERE gmail = %s', (gmail,))
         conn.commit()
         
-        # Kuhaon ang bag-ong balanse nga naay check kung naay nakuha
         cursor.execute('SELECT balance FROM users WHERE gmail = %s', (gmail,))
         row = cursor.fetchone()
         
@@ -155,3 +132,38 @@ def claim_reward():
         return jsonify({"status": "success", "balance": new_balance})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
+
+@app.route('/withdraw', methods=['POST'])
+def withdraw():
+    data = request.json
+    gmail = data.get('gmail')
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT balance, gcash_number FROM users WHERE gmail = %s', (gmail,))
+        row = cursor.fetchone()
+        
+        if not row:
+            cursor.close()
+            conn.close()
+            return jsonify({"status": "error", "message": "Wala makita ang user."})
+        
+        balance, gcash = row[0], row[1]
+        
+        if balance < 100.0:
+            cursor.close()
+            conn.close()
+            return jsonify({"status": "error", "message": "Kinahanglan nga naa sa ₱100.00 pataas ang balanse aron makapag-withdraw!"})
+        
+        cursor.execute('UPDATE users SET balance = 0.0 WHERE gmail = %s', (gmail,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return jsonify({"status": "success", "message": f"Malamposon nga na-withdraw ang ₱{balance} sa GCash number nga {gcash}!"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
+if __name__ == '__main__':
+    app.run(debug=True)
