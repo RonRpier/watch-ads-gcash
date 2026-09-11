@@ -6,16 +6,15 @@ app = Flask(__name__)
 def init_db():
     conn = sqlite3.connect('database.db')
     cursor = conn.cursor()
-    # Pwede nato i-drop ang table karon para ma-reset ug masunod ang bag-ong columns
-    # (Puwede ra ni nimo i-run kausa para ma-fix ang database sa Render)
-    cursor.execute('DROP TABLE IF EXISTS users')
     
+    # Siguroha nga ma-update ang table para maapil ang referral fields kung bag-o pa
     cursor.execute('''
-        CREATE TABLE users (
+        CREATE TABLE IF NOT EXISTS users (
             gmail TEXT PRIMARY KEY,
             password TEXT,
             gcash_number TEXT,
-            balance REAL DEFAULT 0.0
+            balance REAL DEFAULT 0.0,
+            referred_by TEXT
         )
     ''')
     conn.commit()
@@ -33,9 +32,10 @@ def register():
     gmail = data.get('gmail')
     password = data.get('password')
     gcash = data.get('gcash')
+    ref_code = data.get('refCode', "").strip()
     
     if not gmail or not password or not gcash:
-        return jsonify({"status": "error", "message": "Palihug pun-a ang tanang field!"})
+        return jsonify({"status": "error", "message": "Palihug pun-a ang tanang kinahanglang field!"})
     
     conn = sqlite3.connect('database.db')
     cursor = conn.cursor()
@@ -46,9 +46,17 @@ def register():
         conn.close()
         return jsonify({"status": "error", "message": "Ang kini nga Gmail narehistro na daan!"})
     
-    # I-save ang bag-ong account
-    cursor.execute('INSERT INTO users (gmail, password, gcash_number, balance) VALUES (?, ?, ?, ?)', 
-                   (gmail, password, gcash, 0.0))
+    # I-save ang bag-ong account, ug i-record kinsa ang nag-refer (kung naa man)
+    cursor.execute('INSERT INTO users (gmail, password, gcash_number, balance, referred_by) VALUES (?, ?, ?, ?, ?)', 
+                   (gmail, password, gcash, 0.0, ref_code))
+    
+    # Kung naay valid referral code (Gmail sa nag-invite) ug dili niya kaugalingon iyang gigamit
+    if ref_code and ref_code != gmail:
+        cursor.execute('SELECT gmail FROM users WHERE gmail = ?', (ref_code,))
+        if cursor.fetchone():
+            # Hatagan og ₱1.00 bonus ang nag-invite
+            cursor.execute('UPDATE users SET balance = balance + 1.0 WHERE gmail = ?', (ref_code,))
+    
     conn.commit()
     conn.close()
     
