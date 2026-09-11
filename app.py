@@ -1,24 +1,34 @@
 from flask import Flask, render_template, request, jsonify
-import sqlite3
+import os
+import psycopg2
 
 app = Flask(__name__)
 
+def get_db_connection():
+    # Kuhaon ang DATABASE_URL gikan sa Render environment variables
+    DATABASE_URL = os.environ.get("DATABASE_URL")
+    conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+    return conn
+
 def init_db():
-    conn = sqlite3.connect('database.db')
-    cursor = conn.cursor()
-    
-    # Siguroha nga ma-update ang table para maapil ang referral fields kung bag-o pa
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            gmail TEXT PRIMARY KEY,
-            password TEXT,
-            gcash_number TEXT,
-            balance REAL DEFAULT 0.0,
-            referred_by TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                gmail VARCHAR(255) PRIMARY KEY,
+                password VARCHAR(255),
+                gcash_number VARCHAR(50),
+                balance REAL DEFAULT 0.0,
+                referred_by VARCHAR(255)
+            )
+        ''')
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print("Database initialized successfully!")
+    except Exception as e:
+        print(f"Error initializing database: {e}")
 
 init_db()
 
@@ -37,30 +47,31 @@ def register():
     if not gmail or not password or not gcash:
         return jsonify({"status": "error", "message": "Palihug pun-a ang tanang kinahanglang field!"})
     
-    conn = sqlite3.connect('database.db')
-    cursor = conn.cursor()
-    
-    # Tan-awon kung naay nagamit na ana nga Gmail
-    cursor.execute('SELECT gmail FROM users WHERE gmail = ?', (gmail,))
-    if cursor.fetchone():
-        conn.close()
-        return jsonify({"status": "error", "message": "Ang kini nga Gmail narehistro na daan!"})
-    
-    # I-save ang bag-ong account, ug i-record kinsa ang nag-refer (kung naa man)
-    cursor.execute('INSERT INTO users (gmail, password, gcash_number, balance, referred_by) VALUES (?, ?, ?, ?, ?)', 
-                   (gmail, password, gcash, 0.0, ref_code))
-    
-    # Kung naay valid referral code (Gmail sa nag-invite) ug dili niya kaugalingon iyang gigamit
-    if ref_code and ref_code != gmail:
-        cursor.execute('SELECT gmail FROM users WHERE gmail = ?', (ref_code,))
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT gmail FROM users WHERE gmail = %s', (gmail,))
         if cursor.fetchone():
-            # Hatagan og ₱1.00 bonus ang nag-invite
-            cursor.execute('UPDATE users SET balance = balance + 1.0 WHERE gmail = ?', (ref_code,))
-    
-    conn.commit()
-    conn.close()
-    
-    return jsonify({"status": "success", "message": "Malamposon ang pagrehistro! Pwede na ka mag-login."})
+            cursor.close()
+            conn.close()
+            return jsonify({"status": "error", "message": "Ang kini nga Gmail narehistro na daan!"})
+        
+        cursor.execute('INSERT INTO users (gmail, password, gcash_number, balance, referred_by) VALUES (%s, %s, %s, %s, %s)', 
+                       (gmail, password, gcash, 0.0, ref_code))
+        
+        if ref_code and ref_code != gmail:
+            cursor.execute('SELECT gmail FROM users WHERE gmail = %s', (ref_code,))
+            if cursor.fetchone():
+                cursor.execute('UPDATE users SET balance = balance + 1.0 WHERE gmail = %s', (ref_code,))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return jsonify({"status": "success", "message": "Malamposon ang pagrehistro! Pwede na ka mag-login."})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -68,67 +79,81 @@ def login():
     gmail = data.get('gmail')
     password = data.get('password')
     
-    conn = sqlite3.connect('database.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT password, gcash_number, balance FROM users WHERE gmail = ?', (gmail,))
-    row = cursor.fetchone()
-    conn.close()
-    
-    if not row:
-        return jsonify({"status": "error", "message": "Wala makita ang maong Gmail account."})
-    
-    db_password, gcash, balance = row[0], row[1], row[2]
-    
-    if db_password != password:
-        return jsonify({"status": "error", "message": "Sayop ang imong password!"})
-    
-    return jsonify({
-        "status": "success", 
-        "gcash": gcash, 
-        "balance": balance
-    })
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT password, gcash_number, balance FROM users WHERE gmail = %s', (gmail,))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if not row:
+            return jsonify({"status": "error", "message": "Wala makita ang maong Gmail account."})
+        
+        db_password, gcash, balance = row[0], row[1], row[2]
+        
+        if db_password != password:
+            return jsonify({"status": "error", "message": "Sayop ang imong password!"})
+        
+        return jsonify({
+            "status": "success", 
+            "gcash": gcash, 
+            "balance": balance
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
 @app.route('/claim-reward', methods=['POST'])
 def claim_reward():
     data = request.json
     gmail = data.get('gmail')
     
-    conn = sqlite3.connect('database.db')
-    cursor = conn.cursor()
-    cursor.execute('UPDATE users SET balance = balance + 5.0 WHERE gmail = ?', (gmail,))
-    conn.commit()
-    
-    cursor.execute('SELECT balance FROM users WHERE gmail = ?', (gmail,))
-    new_balance = cursor.fetchone()[0]
-    conn.close()
-    
-    return jsonify({"status": "success", "balance": new_balance})
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('UPDATE users SET balance = balance + 5.0 WHERE gmail = %s', (gmail,))
+        conn.commit()
+        
+        cursor.execute('SELECT balance FROM users WHERE gmail = %s', (gmail,))
+        new_balance = cursor.fetchone()[0]
+        cursor.close()
+        conn.close()
+        
+        return jsonify({"status": "success", "balance": new_balance})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
 @app.route('/withdraw', methods=['POST'])
 def withdraw():
     data = request.json
     gmail = data.get('gmail')
     
-    conn = sqlite3.connect('database.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT balance, gcash_number FROM users WHERE gmail = ?', (gmail,))
-    row = cursor.fetchone()
-    
-    if not row:
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT balance, gcash_number FROM users WHERE gmail = %s', (gmail,))
+        row = cursor.fetchone()
+        
+        if not row:
+            cursor.close()
+            conn.close()
+            return jsonify({"status": "error", "message": "Wala makita ang user."})
+        
+        balance, gcash = row[0], row[1]
+        
+        if balance < 100.0:
+            cursor.close()
+            conn.close()
+            return jsonify({"status": "error", "message": "Kinahanglan nga naa sa ₱100.00 pataas ang balanse aron makapag-withdraw!"})
+        
+        cursor.execute('UPDATE users SET balance = 0.0 WHERE gmail = %s', (gmail,))
+        conn.commit()
+        cursor.close()
         conn.close()
-        return jsonify({"status": "error", "message": "Wala makita ang user."})
-    
-    balance, gcash = row[0], row[1]
-    
-    if balance < 100.0:
-        conn.close()
-        return jsonify({"status": "error", "message": "Kinahanglan nga naa sa ₱100.00 pataas ang balanse aron makapag-withdraw!"})
-    
-    cursor.execute('UPDATE users SET balance = 0.0 WHERE gmail = ?', (gmail,))
-    conn.commit()
-    conn.close()
-    
-    return jsonify({"status": "success", "message": f"Malamposon nga na-withdraw ang ₱{balance} sa GCash number nga {gcash}!"})
+        
+        return jsonify({"status": "success", "message": f"Malamposon nga na-withdraw ang ₱{balance} sa GCash number nga {gcash}!"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
 if __name__ == '__main__':
     app.run(debug=True)
