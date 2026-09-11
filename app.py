@@ -6,8 +6,12 @@ app = Flask(__name__)
 def init_db():
     conn = sqlite3.connect('database.db')
     cursor = conn.cursor()
+    # Pwede nato i-drop ang table karon para ma-reset ug masunod ang bag-ong columns
+    # (Puwede ra ni nimo i-run kausa para ma-fix ang database sa Render)
+    cursor.execute('DROP TABLE IF EXISTS users')
+    
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
+        CREATE TABLE users (
             gmail TEXT PRIMARY KEY,
             password TEXT,
             gcash_number TEXT,
